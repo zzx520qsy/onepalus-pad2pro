@@ -1,0 +1,194 @@
+name: Build_oneplus_sm8750
+permissions:
+  contents: read
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_type:
+        description: "📝请选择要集成的KSU："
+        required: true
+        type: choice
+        options:
+          - 'ReSukiSU'
+          - 'SukiSU-Ultra'
+        default: 'ReSukiSU'
+        
+      device_name:
+        description: "📝请选择要编译的机型："
+        required: true
+        type: choice
+        options:
+          - 'oneplus_13'
+          - 'oneplus_ace5_pro'
+          - 'oneplus_ace_6'
+          - 'oneplus_13t'
+          - 'oneplus_pad_2_pro'
+          - 'oneplus_ace5_ultra'
+          - 'realme_GT7'
+          - 'realme_GT7pro'
+          - 'realme_GT7pro_Speed'
+          - 'realme_GT8'
+        default: 'oneplus_ace5_pro'
+
+      custom_kernel_suffix:
+        description: "✏️ 自定义内核名称- (-开头 留空则默认官方）"
+        required: false
+        default: ''
+      
+      custom_kernel_time:
+        description: "⏰ 自定义构建时间- (英文时间字符串格式 留空则默认官方）"
+        required: false
+        default: ''
+
+      enable_susfs:
+        description: "启用SUSFS"
+        required: true
+        default: true
+        type: boolean
+        
+      enable_ReKernel:
+        description: "添加Re-Kernel支持"
+        required: true
+        default: false
+        type: boolean
+
+      enable_Adios:
+        description: "添加ADIOS IO调度器支持"
+        required: true
+        default: true
+        type: boolean
+      
+      enable_scx:
+        description: "添加完美风驰"
+        required: true
+        default: true
+        type: boolean
+
+      enable_bbg:
+        description: "开启BBG基带守护"
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    name: Build_${{ github.event.inputs.device_name }}_${{ github.event.inputs.ksu_type }}
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      KSU_TYPE: ${{ github.event.inputs.ksu_type }}
+      DEVICES_NAME: ${{ github.event.inputs.device_name }}
+      CUSTOM_KERNEL_SUFFIX: ${{ github.event.inputs.custom_kernel_suffix }}
+      CUSTOM_KERNEL_TIME: ${{ github.event.inputs.custom_kernel_time }}
+      ENABLE_SUSFS: ${{ github.event.inputs.enable_susfs }}
+      ENABLE_REKERNEL: ${{ github.event.inputs.enable_ReKernel }}
+      ENABLE_ADIOS: ${{ github.event.inputs.enable_Adios }}
+      ENABLE_SCX: ${{ github.event.inputs.enable_scx }}
+      ENABLE_BBG: ${{ github.event.inputs.enable_bbg }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: ⚙️ 设置对应机型配置文件
+        run: |
+          case "${{ env.DEVICES_NAME }}" in
+            oneplus_ace5_pro)
+              echo "REPO_MANIFEST=sm8750_b_16.0.0_oneplus_ace5_pro" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace5_pro_b" >> $GITHUB_ENV
+              ;;
+            oneplus_13)
+              echo "REPO_MANIFEST=sm8750_b_16.0.0_oneplus_13" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_13_b" >> $GITHUB_ENV
+              ;;
+            oneplus_ace_6)
+              echo "REPO_MANIFEST=sm8750_b_16.0.0_ace_6" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace_6" >> $GITHUB_ENV
+              ;;
+            oneplus_13t)
+              echo "REPO_MANIFEST=sm8750_b_16.0.0_oneplus_13t" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_13t_b" >> $GITHUB_ENV
+              ;;
+            oneplus_pad_2_pro)
+              echo "REPO_MANIFEST=sm8750_b_16.0.0_pad_2_pro" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_pad_2_pro_b" >> $GITHUB_ENV
+              ;;
+            oneplus_ace5_ultra)
+              echo "REPO_MANIFEST=mt6991_b_16.0.0_oneplus_ace5_ultra" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace5_ultra_b" >> $GITHUB_ENV
+              ;;
+            realme_GT7)
+              echo "REPO_MANIFEST=mt6991_b_16.0.0_oneplus_ace5_ultra" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace5_ultra_b" >> $GITHUB_ENV
+              ;;
+            realme_GT7pro)
+              echo "IMAGENAME=Image_Rm_GT_7_Pro" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace_6" >> $GITHUB_ENV
+              ;;
+            realme_GT7pro_Speed)
+              echo "IMAGENAME=Image_Rm_GT_7_Pro_Speed" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace_6" >> $GITHUB_ENV
+              ;;
+            realme_GT8)
+              echo "IMAGENAME=Image_Rm_GT_8" >> $GITHUB_ENV
+              echo "SCHED_FILE=oneplus_ace_6" >> $GITHUB_ENV
+              ;;
+          esac
+          if [ -z "${{ env.CUSTOM_KERNEL_SUFFIX }}" ]; then
+            case "${{ env.DEVICES_NAME }}" in
+              oneplus_pad_2_pro)
+                DEFAULT_SUFFIX='-android15-8-g096cdb6ecefc-ab14358676-4k'
+                ;;
+              oneplus_ace5_ultra)
+                DEFAULT_SUFFIX='-android15-8-ge6068c2aa11d-abogki454747580-4k'
+                ;;
+              oneplus_13 | oneplus_13t | oneplus_ace5_pro | oneplus_ace_6 | realme_GT7 | realme_GT7pro_Speed | realme_GT8)
+                DEFAULT_SUFFIX='-android15-OKI'
+                ;;
+              *)
+                DEFAULT_SUFFIX='-android15-custom'
+                ;;
+            esac
+            echo "KERNEL_SUFFIX=$DEFAULT_SUFFIX" >> $GITHUB_ENV
+          else
+            echo "KERNEL_SUFFIX=${{ env.CUSTOM_KERNEL_SUFFIX }}" >> $GITHUB_ENV
+          fi
+
+      - name: 🧰 安装编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y git zip unzip lld python3 bc cpio flex bison libssl-dev libelf-dev dwarves
+
+      - name: 🧱 拉取OKI内核源码
+        run: |
+          git clone https://github.com/oplus/oplus_kernel.git kernel --depth=1
+          cd kernel
+          git checkout ${{ env.REPO_MANIFEST }} || true
+
+      - name: 🔧 集成KSU/SUSFS/风驰/ADIOS
+        run: |
+          cd kernel
+          # 这里放实际的补丁脚本，如SukiSU集成、SCX调度、ADIOS、SUSFS等
+
+      - name: 🔨 编译内核
+        run: |
+          cd kernel
+          make O=out ARCH=arm64 ${{ env.SCHED_FILE }}_defconfig
+          make -j$(nproc) O=out ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+
+      - name: 📦 打包AK3刷入包
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git AK3
+          cp kernel/out/arch/arm64/boot/Image AK3/
+          cd AK3
+          zip -r9 OKI-Kernel-${{ env.DEVICES_NAME }}${{ env.KERNEL_SUFFIX }}.zip *
+
+      - name: 📤 上传成品
+        uses: actions/upload-artifact@v4
+        with:
+          name: OKI-AK3-${{ env.DEVICES_NAME }}
+          path: AK3/*.zip
