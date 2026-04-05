@@ -1,0 +1,170 @@
+name: Build_oneplus_pad2pro_Kernel
+permissions:
+  contents: read
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_type:
+        description: "📝请选择要集成的KSU："
+        required: true
+        type: choice
+        options:
+          - 'ReSukiSU'
+          - 'SukiSU-Ultra'
+        default: 'ReSukiSU'
+      
+      custom_kernel_suffix:
+        description: "✏️ 自定义内核名称后缀 (-开头，留空用默认)"
+        required: false
+        default: ''
+      
+      enable_susfs:
+        description: "✅ 启用SUSFS隐藏root"
+        required: true
+        default: true
+        type: boolean
+        
+      enable_ReKernel:
+        description: "✅ 添加Re-Kernel支持"
+        required: true
+        default: false
+        type: boolean
+
+      enable_Adios:
+        description: "✅ 添加ADIOS IO调度器"
+        required: true
+        default: true
+        type: boolean
+      
+      enable_scx:
+        description: "✅ 添加SCX风驰调度"
+        required: true
+        default: true
+        type: boolean
+
+      enable_bbg:
+        description: "✅ 开启BBG基带守护"
+        required: true
+        default: true
+        type: boolean
+
+jobs:
+  build:
+    name: Build_OnePlus_Pad2Pro_${{ github.event.inputs.ksu_type }}
+    runs-on: ubuntu-latest
+    env:
+      # 一加Pad2Pro固定配置
+      DEVICE: oneplus_pad_2_pro
+      REPO_BRANCH: sm8750_b_16.0.0_pad_2_pro
+      DEFCONFIG: oneplus_pad_2_pro_b_defconfig
+      IMAGE_NAME: Image
+      DEFAULT_SUFFIX: -android15-8-g096cdb6ecefc-ab14358676-4k
+      # 环境变量
+      KSU_TYPE: ${{ github.event.inputs.ksu_type }}
+      CUSTOM_SUFFIX: ${{ github.event.inputs.custom_kernel_suffix }}
+      ENABLE_SUSFS: ${{ github.event.inputs.enable_susfs }}
+      ENABLE_REKERNEL: ${{ github.event.inputs.enable_ReKernel }}
+      ENABLE_ADIOS: ${{ github.event.inputs.enable_Adios }}
+      ENABLE_SCX: ${{ github.event.inputs.enable_scx }}
+      ENABLE_BBG: ${{ github.event.inputs.enable_bbg }}
+
+    steps:
+      - name: 🧰 安装编译依赖
+        run: |
+          sudo apt update
+          sudo apt install -y git zip unzip python3 bc cpio flex bison libssl-dev libelf-dev dwarves
+          sudo apt install -y gcc-aarch64-linux-gnu gcc-arm-linux-gnueabi
+          # 安装x86_64架构的Clang 18（适配GitHub Actions）
+          wget https://github.com/llvm/llvm-project/releases/download/llvmorg-18.1.8/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+          sudo tar -C /usr/local -xf clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+          echo "PATH=/usr/local/clang+llvm-18.1.8-x86_64-linux-gnu-ubuntu-22.04/bin:$PATH" >> $GITHUB_ENV
+
+      - name: 🧱 拉取一加Pad2Pro官方内核源码
+        run: |
+          git clone https://github.com/oplus/oplus_kernel.git kernel --depth=1
+          cd kernel
+          git checkout ${{ env.REPO_BRANCH }} || echo "分支切换失败，使用默认分支"
+
+      - name: 🔧 集成KSU (ReSukiSU / SukiSU-Ultra)
+        run: |
+          cd kernel
+          if [ "${{ env.KSU_TYPE }}" = "SukiSU-Ultra" ]; then
+            echo "正在集成 SukiSU-Ultra..."
+            curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+          else
+            echo "正在集成 ReSukiSU..."
+            curl -LSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s main
+          fi
+
+      - name: 🔧 集成SUSFS (隐藏root)
+        if: ${{ env.ENABLE_SUSFS == 'true' }}
+        run: |
+          cd kernel
+          echo "正在集成 SUSFS..."
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu --depth=1 -b gki-android15-6.6
+          # 应用SUSFS补丁
+          bash susfs4ksu/kernel_patches/apply_patches.sh
+
+      - name: 🔧 集成ADIOS IO调度器
+        if: ${{ env.ENABLE_ADIOS == 'true' }}
+        run: |
+          cd kernel
+          echo "正在集成 ADIOS..."
+          git clone https://github.com/Amog787/adios.git adios --depth=1
+          cp adios/block/iosched/adios-iosched.c common/block/iosched/
+          # 在defconfig中添加配置，避免out目录不存在的问题
+          echo "CONFIG_ADIOS=y" >> arch/arm64/configs/${{ env.DEFCONFIG }}
+
+      - name: 🔧 集成SCX风驰调度
+        if: ${{ env.ENABLE_SCX == 'true' }}
+        run: |
+          cd kernel
+          echo "正在集成 SCX风驰..."
+          git clone https://github.com/sched-ext/scx.git scx --depth=1
+          # 标准集成方式，不覆盖原有文件
+          bash scx/kernel/patch_kernel.sh common
+          echo "CONFIG_SCHED_CLASS_EXT=y" >> arch/arm64/configs/${{ env.DEFCONFIG }}
+          echo "CONFIG_SCHED_SCX=y" >> arch/arm64/configs/${{ env.DEFCONFIG }}
+
+      - name: 🔧 配置BBG基带守护
+        if: ${{ env.ENABLE_BBG == 'true' }}
+        run: |
+          cd kernel
+          echo "正在开启 BBG基带守护..."
+          echo "CONFIG_BBG=y" >> arch/arm64/configs/${{ env.DEFCONFIG }}
+
+      - name: 🔨 编译内核
+        run: |
+          cd kernel
+          # 生成.config
+          make O=out ARCH=arm64 ${{ env.DEFCONFIG }}
+          # 编译内核
+          make -j$(nproc) O=out ARCH=arm64 \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi- \
+            CC=clang-18
+
+      - name: 📦 打包AnyKernel3刷入包
+        run: |
+          # 设置内核后缀
+          if [ -n "${{ env.CUSTOM_SUFFIX }}" ]; then
+            KERNEL_SUFFIX="${{ env.CUSTOM_SUFFIX }}"
+          else
+            KERNEL_SUFFIX="${{ env.DEFAULT_SUFFIX }}"
+          fi
+          echo "内核后缀: $KERNEL_SUFFIX"
+          
+          # 打包AK3
+          git clone https://github.com/osm0sis/AnyKernel3.git AK3
+          cp kernel/out/arch/arm64/boot/${{ env.IMAGE_NAME }} AK3/Image
+          cd AK3
+          zip -r9 OKI-Kernel-${{ env.DEVICE }}${KERNEL_SUFFIX}.zip ./*
+
+      - name: 📤 上传成品内核包
+        uses: actions/upload-artifact@v4
+        with:
+          name: OKI-Kernel-${{ env.DEVICE }}
+          path: AK3/*.zip
+         
